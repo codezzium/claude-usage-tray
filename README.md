@@ -1,6 +1,6 @@
 # claude-usage-tray
 
-Your Claude plan usage in the Windows taskbar. One small number per limit, refreshed every minute.
+Your Claude plan usage in the Windows taskbar. One small number per limit, refreshed every 5 minutes.
 
 ![Three tray icons showing 15, 63 and 88](docs/preview.png)
 
@@ -50,11 +50,12 @@ To stop it starting, delete `Claude Usage Tray.lnk` from the folder that opens w
 
 ## How it works
 
-- Every minute it reads the access token from `%USERPROFILE%\.claude\.credentials.json`, the file Claude Code keeps, and calls `https://api.anthropic.com/api/oauth/usage`. The token is sent nowhere else.
-- It never uses the refresh token. When the access token expires, the icons show a grey `?` until you use Claude Code again and it refreshes the login.
+- Every 5 minutes it reads the access token from `%USERPROFILE%\.claude\.credentials.json`, the file Claude Code keeps, and calls `https://api.anthropic.com/api/oauth/usage`. The token is sent nowhere else.
+- It never uses the refresh token. When the access token expires, no new numbers arrive until you use Claude Code again and it refreshes the login.
 - Switching accounts in Claude Code needs no restart. The next poll picks up the new account.
-- After three failed requests in a row the icons turn grey. On HTTP 429 it waits longer between requests, up to 10 minutes.
-- Right-click an icon for **Refresh now** and **Quit**. A left click also refreshes.
+- The endpoint is rate limited. Polling once a minute got HTTP 429 after about half an hour, so the default is 5 minutes. On 429 it waits longer before the next try, up to 30 minutes. If a 429 comes right after a successful request, the normal interval doubles for good.
+- When a request fails, the icons keep the last numbers and the tooltip shows when they were updated. They turn into a grey `?` only when there is no data or it is over an hour old.
+- Right-click an icon for **Refresh now** and **Quit**. A left click also refreshes. Manual refresh is ignored within a minute of the last request and while rate limited.
 - Tooltips are in Turkish when Windows is set to Turkish, otherwise in English.
 - A log is written to `usage_tray.log` next to the script (rotated at 256 KB).
 

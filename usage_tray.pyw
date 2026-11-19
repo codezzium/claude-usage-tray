@@ -18,10 +18,11 @@ APP_DIR = Path(__file__).resolve().parent
 LOG_FILE = APP_DIR / "usage_tray.log"
 CREDENTIALS = Path.home() / ".claude" / ".credentials.json"
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
-POLL_SECONDS = 60
+POLL_SECONDS = 300
+MAX_POLL_SECONDS = 1800
+STALE_SECONDS = 2 * MAX_POLL_SECONDS + 60
+MIN_MANUAL_GAP_SECONDS = 60
 LAYOUT_SECONDS = 2
-MAX_BACKOFF_SECONDS = 600
-STALE_AFTER_FAILURES = 3
 ERROR_ALREADY_EXISTS = 183
 LANG_TURKISH = 0x1F
 FONT_PATH = r"C:\Windows\Fonts\arialbd.ttf"
@@ -48,6 +49,8 @@ TEXTS = {
         "no_limits": "no limits returned",
         "token_expired": "open Claude Code to refresh the login",
         "token_invalid": "token rejected (401)",
+        "updated": "Updated",
+        "rate_limited": "rate limited, waiting",
     },
     "tr": {
         "session": "5 saatlik oturum",
@@ -62,6 +65,8 @@ TEXTS = {
         "no_limits": "limit gelmedi",
         "token_expired": "Claude Code oturumu yenilenmeli",
         "token_invalid": "token geçersiz (401)",
+        "updated": "Güncellendi",
+        "rate_limited": "çok sık istek, bekleniyor",
     },
 }
 KIND_ORDER = {
@@ -118,6 +123,13 @@ def fetch_limits() -> list[dict]:
         payload = json.load(response)
     limits = payload.get("limits") or []
     return sorted(limits, key=lambda item: KIND_ORDER.get(item.get("kind"), len(KIND_ORDER)))
+
+
+def retry_after(error: urllib.error.HTTPError) -> int:
+    try:
+        return max(int(error.headers.get("Retry-After") or 0), 0)
+    except ValueError:
+        return 0
 
 
 def limit_key(limit: dict) -> str:
@@ -206,9 +218,15 @@ class App:
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
         self.wake_event = threading.Event()
-        self.failures = 0
+        self.interval = POLL_SECONDS
         self.limits: list[dict] = []
-        self.stale_reason: str | None = T["loading"]
+        self.updated_at: datetime | None = None
+        self.updated_mono: float | None = None
+        self.error: str | None = None
+        self.last_request = float("-inf")
+        self.cooldown_until = 0.0
+        self.last_was_ok = False
+        self.consecutive_429 = 0
 
     def menu(self) -> pystray.Menu:
         return pystray.Menu(
@@ -217,6 +235,10 @@ class App:
         )
 
     def refresh_now(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
+        now = time.monotonic()
+        if now - self.last_request < MIN_MANUAL_GAP_SECONDS or now < self.cooldown_until:
+            log.info("manual refresh ignored")
+            return
         self.wake_event.set()
 
     def quit(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
@@ -252,47 +274,58 @@ class App:
             count = max(len(limits), 1)
             self.ensure_slots(count)
             slots = self.ordered_slots(count)
-            if not limits:
-                slots[0].paint("?", None, f"{T['app']}: {self.stale_reason or T['no_limits']}")
+            fresh = self.updated_mono is not None and time.monotonic() - self.updated_mono <= STALE_SECONDS
+            if not limits or not fresh or self.updated_at is None:
+                reason = self.error or (T["no_limits"] if self.updated_at else T["loading"])
+                for slot in slots:
+                    slot.paint("?", None, f"{T['app']}: {T['unavailable']} ({reason})")
                 return
+            updated = f"{T['updated']}: {self.updated_at.strftime('%H:%M')}"
+            if self.error:
+                updated += f" ({self.error})"
             for slot, limit in zip(slots, limits):
-                if self.stale_reason:
-                    slot.paint("?", None, f"{limit_label(limit)}: {T['unavailable']} ({self.stale_reason})")
-                    continue
                 percent = limit.get("percent")
                 text = "?" if percent is None else str(round(percent))
-                title = f"{limit_label(limit)}: %{text}\n{T['resets']}: {format_reset(limit.get('resets_at'))}"
+                reset = format_reset(limit.get("resets_at"))
+                title = f"{limit_label(limit)}: %{text}\n{T['resets']}: {reset}\n{updated}"
                 slot.paint(text, percent, title)
 
-    def poll_once(self) -> int:
+    def poll_once(self) -> float:
+        self.last_request = time.monotonic()
+        previous_ok = self.last_was_ok
+        self.last_was_ok = False
         try:
             limits = fetch_limits()
         except TokenUnavailable as error:
             log.warning("token unavailable: %s", error)
-            self.stale_reason = T["token_expired"]
-            return POLL_SECONDS
+            self.error = T["token_expired"]
+            return self.interval
         except urllib.error.HTTPError as error:
-            self.failures += 1
-            log.warning("http error %s", error.code)
-            if error.code == 401:
-                self.stale_reason = T["token_invalid"]
-                return POLL_SECONDS
-            if self.failures >= STALE_AFTER_FAILURES:
-                self.stale_reason = f"HTTP {error.code}"
             if error.code == 429:
-                return min(POLL_SECONDS * 2 ** self.failures, MAX_BACKOFF_SECONDS)
-            return POLL_SECONDS
+                if previous_ok:
+                    self.interval = min(self.interval * 2, MAX_POLL_SECONDS)
+                self.consecutive_429 += 1
+                delay = min(self.interval * 2 ** (self.consecutive_429 - 1), MAX_POLL_SECONDS)
+                delay = max(delay, retry_after(error))
+                self.cooldown_until = time.monotonic() + delay
+                self.error = T["rate_limited"]
+                log.warning("http 429, next request in %s s, interval now %s s", delay, self.interval)
+                return delay
+            log.warning("http error %s", error.code)
+            self.error = T["token_invalid"] if error.code == 401 else f"HTTP {error.code}"
+            return self.interval
         except Exception as error:
-            self.failures += 1
             log.warning("poll failed: %r", error)
-            if self.failures >= STALE_AFTER_FAILURES:
-                self.stale_reason = type(error).__name__
-            return POLL_SECONDS
-        self.failures = 0
-        self.stale_reason = None
+            self.error = type(error).__name__
+            return self.interval
+        self.error = None
+        self.last_was_ok = True
+        self.consecutive_429 = 0
         self.limits = limits
+        self.updated_at = datetime.now()
+        self.updated_mono = time.monotonic()
         log.info("ok %s", [(limit_key(item), item.get("percent")) for item in limits])
-        return POLL_SECONDS
+        return self.interval
 
     def run(self) -> None:
         next_poll = 0.0
@@ -304,7 +337,7 @@ class App:
                 self.render()
             except Exception:
                 log.exception("unexpected error in main loop")
-                next_poll = time.monotonic() + POLL_SECONDS
+                next_poll = time.monotonic() + self.interval
             self.wake_event.wait(LAYOUT_SECONDS)
         for slot in self.slots:
             slot.icon.stop()
