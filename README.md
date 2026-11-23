@@ -23,7 +23,9 @@ The colour shows how full the limit is: green under 50%, amber from 50%, red fro
 
 ## Install
 
-Download `ClaudeUsageTray.exe` from the [Releases](https://github.com/codezzium/claude-usage-tray/releases) page and run it. No Python needed. The exe is not code signed, so Windows may show a SmartScreen warning the first time.
+Download `ClaudeUsageTraySetup.exe` from the [Releases](https://github.com/codezzium/claude-usage-tray/releases) page and run it. No Python and no admin rights needed. It installs for your user only, into `%LOCALAPPDATA%\Programs\ClaudeUsageTray`, and adds a Start menu entry. The installer is not code signed, so Windows may show a SmartScreen warning: choose **More info**, then **Run anyway**.
+
+Installing a new version over an old one closes the running copy first. To remove it, use **Settings > Apps > Installed apps > Claude Usage Tray > Uninstall**.
 
 ### Run from source
 
@@ -40,18 +42,19 @@ Windows puts new tray icons in the hidden area under the `^` arrow. Drag the thr
 
 ## Start with Windows
 
-Right-click any of the icons and tick **Start with Windows**. Untick it to stop. It adds a `Claude Usage Tray` entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, so no admin rights are needed.
+The installer has a **Start with Windows** checkbox. You can change it later: right-click any of the icons and tick or untick **Start with Windows**. It uses a `Claude Usage Tray` entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, so no admin rights are needed. Uninstalling removes the entry.
 
-The entry points to the exe where you ticked it. If you move the exe, start it once from the new place and the entry follows.
+## Build the installer
 
-## Build the exe
+Needs Python 3.15 and [Inno Setup 6](https://jrsoftware.org/isinfo.php). Use a clean environment, so that packages you have installed for other work do not end up in the bundle.
 
 ```powershell
-py -m pip install -r requirements-build.txt
-.\build.ps1 -Python py
+py -m venv build-env
+.\build-env\Scripts\python -m pip install -r requirements-build.txt
+.\build.ps1 -Python .\build-env\Scripts\python.exe -Version 1.2.3
 ```
 
-The exe lands in `dist\ClaudeUsageTray.exe`. Pushing a `v*` tag runs the same build on GitHub Actions and attaches the exe to a draft release.
+The installer lands in `dist\ClaudeUsageTraySetup.exe`. Pushing a `v*` tag runs the same build on GitHub Actions and attaches the installer to a draft release. Running the workflow by hand builds it as a downloadable artifact without a release.
 
 ## How it works
 
@@ -62,7 +65,7 @@ The exe lands in `dist\ClaudeUsageTray.exe`. Pushing a `v*` tag runs the same bu
 - When a request fails, the icons keep the last numbers and the tooltip shows when they were updated. They turn into a grey `?` only when there is no data or it is over an hour old.
 - Right-click an icon for **Refresh now**, **Start with Windows** and **Quit**. A left click also refreshes. Manual refresh is ignored within a minute of the last request and while rate limited.
 - Tooltips are in Turkish when Windows is set to Turkish, otherwise in English.
-- A log is written to `usage_tray.log`, rotated at 256 KB. The exe keeps it in `%LOCALAPPDATA%\ClaudeUsageTray`, the source version next to `main.pyw`.
+- A log is written to `usage_tray.log`, rotated at 256 KB. The installed app keeps it in `%LOCALAPPDATA%\ClaudeUsageTray`, the source version next to `main.pyw`.
 
 ## License
 

@@ -26,12 +26,21 @@ STALE_SECONDS = 2 * MAX_POLL_SECONDS + 60
 MIN_MANUAL_GAP_SECONDS = 60
 LAYOUT_SECONDS = 2
 ERROR_ALREADY_EXISTS = 183
+INFINITE = 0xFFFFFFFF
+MUTEX_NAME = "Local\\claude-usage-tray"
+QUIT_EVENT_NAME = "Local\\claude-usage-tray-quit"
 FONT_PATH = r"C:\Windows\Fonts\arialbd.ttf"
 ICON_SIZE = 64
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 kernel32.CreateMutexW.restype = wt.HANDLE
 kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wt.BOOL, wt.LPCWSTR]
+kernel32.CreateEventW.restype = wt.HANDLE
+kernel32.CreateEventW.argtypes = [ctypes.c_void_p, wt.BOOL, wt.BOOL, wt.LPCWSTR]
+kernel32.ResetEvent.restype = wt.BOOL
+kernel32.ResetEvent.argtypes = [wt.HANDLE]
+kernel32.WaitForSingleObject.restype = wt.DWORD
+kernel32.WaitForSingleObject.argtypes = [wt.HANDLE, wt.DWORD]
 shell32 = ctypes.WinDLL("shell32")
 log = logging.getLogger("usage_tray")
 
@@ -173,8 +182,16 @@ class App:
         self.wake_event.set()
 
     def quit(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
+        self.stop()
+
+    def stop(self) -> None:
         self.stop_event.set()
         self.wake_event.set()
+
+    def watch_quit_event(self, handle: int) -> None:
+        kernel32.WaitForSingleObject(handle, INFINITE)
+        log.info("quit requested by another process")
+        self.stop()
 
     def ensure_slots(self, count: int) -> None:
         while len(self.slots) < count:
@@ -279,15 +296,20 @@ def main() -> None:
     handler = RotatingFileHandler(LOG_FILE, maxBytes=256_000, backupCount=1, encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logging.basicConfig(level=logging.INFO, handlers=[handler])
-    kernel32.CreateMutexW(None, False, "Local\\claude-usage-tray")
+    kernel32.CreateMutexW(None, False, MUTEX_NAME)
     if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
         sys.exit(0)
     try:
         startup.refresh()
     except OSError:
         log.exception("startup refresh failed")
+    app = App()
+    quit_event = kernel32.CreateEventW(None, True, False, QUIT_EVENT_NAME)
+    if quit_event:
+        kernel32.ResetEvent(quit_event)
+        threading.Thread(target=app.watch_quit_event, args=(quit_event,), daemon=True).start()
     try:
-        App().run()
+        app.run()
     except Exception:
         log.exception("fatal error")
         raise

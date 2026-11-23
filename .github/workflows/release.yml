@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -18,11 +19,19 @@ jobs:
           python-version: "3.15"
       - name: Install dependencies
         run: python -m pip install -r requirements-build.txt
-      - name: Build exe
+      - name: Build installer
         shell: pwsh
-        run: ./build.ps1
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME.TrimStart("v") } else { "0.0.0" }
+          ./build.ps1 -Version $version
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: ClaudeUsageTraySetup
+          path: dist/ClaudeUsageTraySetup.exe
+          if-no-files-found: error
       - name: Create draft release
+        if: github.ref_type == 'tag'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$env:GITHUB_REF_NAME" dist/ClaudeUsageTray.exe --draft --verify-tag --generate-notes
+        run: gh release create "$env:GITHUB_REF_NAME" dist/ClaudeUsageTraySetup.exe --draft --verify-tag --generate-notes
