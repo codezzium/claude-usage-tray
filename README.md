@@ -19,10 +19,15 @@ The colour shows how full the limit is: green under 50%, amber from 50%, red fro
 ## Requirements
 
 - Windows 10 or 11
-- Python 3.10 or newer
 - [Claude Code](https://claude.com/claude-code), signed in with your Claude account
 
 ## Install
+
+Download `ClaudeUsageTray.exe` from the [Releases](https://github.com/codezzium/claude-usage-tray/releases) page and run it. No Python needed. The exe is not code signed, so Windows may show a SmartScreen warning the first time.
+
+### Run from source
+
+Needs Python 3.10 or newer.
 
 ```powershell
 git clone https://github.com/codezzium/claude-usage-tray.git
@@ -35,18 +40,18 @@ Windows puts new tray icons in the hidden area under the `^` arrow. Drag the thr
 
 ## Start with Windows
 
-Run this in PowerShell from the repo folder:
+Right-click any of the icons and tick **Start with Windows**. Untick it to stop. It adds a `Claude Usage Tray` entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, so no admin rights are needed.
+
+The entry points to the exe where you ticked it. If you move the exe, start it once from the new place and the entry follows.
+
+## Build the exe
 
 ```powershell
-$py = (py -c "import sys; print(sys.executable)") -replace 'python\.exe$', 'pythonw.exe'
-$lnk = (New-Object -ComObject WScript.Shell).CreateShortcut("$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\Claude Usage Tray.lnk")
-$lnk.TargetPath = $py
-$lnk.Arguments = "`"$PWD\main.pyw`""
-$lnk.WorkingDirectory = "$PWD"
-$lnk.Save()
+py -m pip install -r requirements-build.txt
+.\build.ps1 -Python py
 ```
 
-To stop it starting, delete `Claude Usage Tray.lnk` from the folder that opens with `shell:startup`.
+The exe lands in `dist\ClaudeUsageTray.exe`. Pushing a `v*` tag runs the same build on GitHub Actions and attaches the exe to a draft release.
 
 ## How it works
 
@@ -55,9 +60,9 @@ To stop it starting, delete `Claude Usage Tray.lnk` from the folder that opens w
 - Switching accounts in Claude Code needs no restart. The next poll picks up the new account.
 - The endpoint is rate limited. Polling once a minute got HTTP 429 after about half an hour, so the default is 5 minutes. On 429 it waits longer before the next try, up to 30 minutes. If a 429 comes right after a successful request, the normal interval doubles for good.
 - When a request fails, the icons keep the last numbers and the tooltip shows when they were updated. They turn into a grey `?` only when there is no data or it is over an hour old.
-- Right-click an icon for **Refresh now** and **Quit**. A left click also refreshes. Manual refresh is ignored within a minute of the last request and while rate limited.
+- Right-click an icon for **Refresh now**, **Start with Windows** and **Quit**. A left click also refreshes. Manual refresh is ignored within a minute of the last request and while rate limited.
 - Tooltips are in Turkish when Windows is set to Turkish, otherwise in English.
-- A log is written to `usage_tray.log` next to the script (rotated at 256 KB).
+- A log is written to `usage_tray.log`, rotated at 256 KB. The exe keeps it in `%LOCALAPPDATA%\ClaudeUsageTray`, the source version next to `main.pyw`.
 
 ## License
 

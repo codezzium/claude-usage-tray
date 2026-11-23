@@ -1,6 +1,7 @@
 import ctypes
 import ctypes.wintypes as wt
 import logging
+import os
 import sys
 import threading
 import time
@@ -12,11 +13,13 @@ from pathlib import Path
 import pystray
 from PIL import Image, ImageDraw, ImageFont
 
+from usage_tray import startup
 from usage_tray.i18n import T
 from usage_tray.usage_api import TokenUnavailable, fetch_limits, retry_after
 
 APP_DIR = Path(__file__).resolve().parent
-LOG_FILE = APP_DIR / "usage_tray.log"
+DATA_DIR = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / "ClaudeUsageTray"
+LOG_FILE = (DATA_DIR if startup.is_frozen() else APP_DIR) / "usage_tray.log"
 POLL_SECONDS = 300
 MAX_POLL_SECONDS = 1800
 STALE_SECONDS = 2 * MAX_POLL_SECONDS + 60
@@ -145,8 +148,22 @@ class App:
     def menu(self) -> pystray.Menu:
         return pystray.Menu(
             pystray.MenuItem(T["refresh"], self.refresh_now, default=True),
+            pystray.MenuItem(T["startup"], self.toggle_startup, checked=lambda item: startup.is_enabled()),
             pystray.MenuItem(T["quit"], self.quit),
         )
+
+    def toggle_startup(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
+        try:
+            if startup.is_enabled():
+                startup.disable()
+                log.info("startup disabled")
+            else:
+                startup.enable()
+                log.info("startup enabled: %s", startup.command())
+        except OSError:
+            log.exception("startup toggle failed")
+        for slot in list(self.slots):
+            slot.icon.update_menu()
 
     def refresh_now(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
         now = time.monotonic()
@@ -258,12 +275,17 @@ class App:
 
 
 def main() -> None:
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     handler = RotatingFileHandler(LOG_FILE, maxBytes=256_000, backupCount=1, encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logging.basicConfig(level=logging.INFO, handlers=[handler])
     kernel32.CreateMutexW(None, False, "Local\\claude-usage-tray")
     if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
         sys.exit(0)
+    try:
+        startup.refresh()
+    except OSError:
+        log.exception("startup refresh failed")
     try:
         App().run()
     except Exception:
