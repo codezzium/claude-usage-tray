@@ -1,12 +1,10 @@
 import ctypes
 import ctypes.wintypes as wt
-import json
 import logging
 import sys
 import threading
 import time
 import urllib.error
-import urllib.request
 from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -14,75 +12,25 @@ from pathlib import Path
 import pystray
 from PIL import Image, ImageDraw, ImageFont
 
+from usage_tray.i18n import T
+from usage_tray.usage_api import TokenUnavailable, fetch_limits, retry_after
+
 APP_DIR = Path(__file__).resolve().parent
 LOG_FILE = APP_DIR / "usage_tray.log"
-CREDENTIALS = Path.home() / ".claude" / ".credentials.json"
-USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 POLL_SECONDS = 300
 MAX_POLL_SECONDS = 1800
 STALE_SECONDS = 2 * MAX_POLL_SECONDS + 60
 MIN_MANUAL_GAP_SECONDS = 60
 LAYOUT_SECONDS = 2
 ERROR_ALREADY_EXISTS = 183
-LANG_TURKISH = 0x1F
 FONT_PATH = r"C:\Windows\Fonts\arialbd.ttf"
 ICON_SIZE = 64
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 kernel32.CreateMutexW.restype = wt.HANDLE
 kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wt.BOOL, wt.LPCWSTR]
-kernel32.GetUserDefaultUILanguage.restype = wt.WORD
 shell32 = ctypes.WinDLL("shell32")
 log = logging.getLogger("usage_tray")
-
-TEXTS = {
-    "en": {
-        "session": "5-hour session",
-        "weekly_all": "Weekly (all models)",
-        "weekly_model": "Weekly ({model})",
-        "resets": "Resets",
-        "refresh": "Refresh now",
-        "quit": "Quit",
-        "app": "Claude usage",
-        "unavailable": "unavailable",
-        "loading": "loading",
-        "no_limits": "no limits returned",
-        "token_expired": "open Claude Code to refresh the login",
-        "token_invalid": "token rejected (401)",
-        "updated": "Updated",
-        "rate_limited": "rate limited, waiting",
-    },
-    "tr": {
-        "session": "5 saatlik oturum",
-        "weekly_all": "Haftalık (tümü)",
-        "weekly_model": "Haftalık ({model})",
-        "resets": "Sıfırlanma",
-        "refresh": "Şimdi yenile",
-        "quit": "Çıkış",
-        "app": "Claude kullanımı",
-        "unavailable": "okunamadı",
-        "loading": "yükleniyor",
-        "no_limits": "limit gelmedi",
-        "token_expired": "Claude Code oturumu yenilenmeli",
-        "token_invalid": "token geçersiz (401)",
-        "updated": "Güncellendi",
-        "rate_limited": "çok sık istek, bekleniyor",
-    },
-}
-KIND_ORDER = {
-    "session": 0,
-    "weekly_all": 1,
-    "weekly_scoped": 2,
-}
-
-
-def detect_language() -> str:
-    if kernel32.GetUserDefaultUILanguage() & 0x3FF == LANG_TURKISH:
-        return "tr"
-    return "en"
-
-
-T = TEXTS[detect_language()]
 
 
 class NOTIFYICONIDENTIFIER(ctypes.Structure):
@@ -96,40 +44,6 @@ class NOTIFYICONIDENTIFIER(ctypes.Structure):
 
 shell32.Shell_NotifyIconGetRect.restype = ctypes.c_long
 shell32.Shell_NotifyIconGetRect.argtypes = [ctypes.POINTER(NOTIFYICONIDENTIFIER), ctypes.POINTER(wt.RECT)]
-
-
-class TokenUnavailable(Exception):
-    pass
-
-
-def read_token() -> str:
-    data = json.loads(CREDENTIALS.read_text(encoding="utf-8"))
-    oauth = data["claudeAiOauth"]
-    if oauth.get("expiresAt", 0) / 1000 <= time.time():
-        raise TokenUnavailable("access token expired")
-    return oauth["accessToken"]
-
-
-def fetch_limits() -> list[dict]:
-    request = urllib.request.Request(
-        USAGE_URL,
-        headers={
-            "Authorization": f"Bearer {read_token()}",
-            "anthropic-beta": "oauth-2025-04-20",
-            "User-Agent": "claude-usage-tray/1.0",
-        },
-    )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        payload = json.load(response)
-    limits = payload.get("limits") or []
-    return sorted(limits, key=lambda item: KIND_ORDER.get(item.get("kind"), len(KIND_ORDER)))
-
-
-def retry_after(error: urllib.error.HTTPError) -> int:
-    try:
-        return max(int(error.headers.get("Retry-After") or 0), 0)
-    except ValueError:
-        return 0
 
 
 def limit_key(limit: dict) -> str:

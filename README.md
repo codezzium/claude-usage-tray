@@ -28,7 +28,7 @@ The colour shows how full the limit is: green under 50%, amber from 50%, red fro
 git clone https://github.com/codezzium/claude-usage-tray.git
 cd claude-usage-tray
 py -m pip install --user -r requirements.txt
-pyw usage_tray.pyw
+pyw main.pyw
 ```
 
 Windows puts new tray icons in the hidden area under the `^` arrow. Drag the three icons onto the taskbar once. They keep the right order wherever you drop them.
@@ -41,7 +41,7 @@ Run this in PowerShell from the repo folder:
 $py = (py -c "import sys; print(sys.executable)") -replace 'python\.exe$', 'pythonw.exe'
 $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut("$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\Claude Usage Tray.lnk")
 $lnk.TargetPath = $py
-$lnk.Arguments = "`"$PWD\usage_tray.pyw`""
+$lnk.Arguments = "`"$PWD\main.pyw`""
 $lnk.WorkingDirectory = "$PWD"
 $lnk.Save()
 ```

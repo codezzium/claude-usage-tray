@@ -1,3 +1,4 @@
 usage_tray.log*
 err.txt
 __pycache__/
+.vscode/
