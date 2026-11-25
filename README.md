@@ -14,6 +14,8 @@ From left to right:
 
 The colour shows how full the limit is: green under 50%, amber from 50%, red from 80%. Hover an icon to see when the limit resets. If your plan has fewer limits, you get fewer icons.
 
+To keep a single icon, right-click any icon and untick **Show every limit**. The icon then shows the fullest limit, and hovering it lists all of them. Tick it again to bring back one icon per limit. The choice is remembered.
+
 > Not affiliated with Anthropic. It reads an undocumented endpoint that may change without notice.
 
 ## Requirements

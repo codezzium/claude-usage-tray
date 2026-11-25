@@ -13,7 +13,7 @@ from pathlib import Path
 import pystray
 from PIL import Image, ImageDraw, ImageFont
 
-from usage_tray import startup
+from usage_tray import settings, startup
 from usage_tray.i18n import T
 from usage_tray.usage_api import TokenUnavailable, fetch_limits, retry_after
 
@@ -153,13 +153,26 @@ class App:
         self.cooldown_until = 0.0
         self.last_was_ok = False
         self.consecutive_429 = 0
+        self.compact = settings.is_compact()
 
     def menu(self) -> pystray.Menu:
         return pystray.Menu(
             pystray.MenuItem(T["refresh"], self.refresh_now, default=True),
+            pystray.MenuItem(T["show_all"], self.toggle_compact, checked=lambda item: not self.compact),
             pystray.MenuItem(T["startup"], self.toggle_startup, checked=lambda item: startup.is_enabled()),
             pystray.MenuItem(T["quit"], self.quit),
         )
+
+    def toggle_compact(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
+        self.compact = not self.compact
+        try:
+            settings.set_compact(self.compact)
+        except OSError:
+            log.exception("saving compact mode failed")
+        log.info("compact mode %s", "on" if self.compact else "off")
+        self.render()
+        for slot in list(self.slots):
+            slot.icon.update_menu()
 
     def toggle_startup(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
         try:
@@ -219,7 +232,7 @@ class App:
     def render(self) -> None:
         with self.lock:
             limits = self.limits
-            count = max(len(limits), 1)
+            count = 1 if self.compact else max(len(limits), 1)
             self.ensure_slots(count)
             slots = self.ordered_slots(count)
             fresh = self.updated_mono is not None and time.monotonic() - self.updated_mono <= STALE_SECONDS
@@ -231,12 +244,28 @@ class App:
             updated = f"{T['updated']}: {self.updated_at.strftime('%H:%M')}"
             if self.error:
                 updated += f" ({self.error})"
+            if self.compact:
+                self.paint_compact(slots[0], limits, updated)
+                return
             for slot, limit in zip(slots, limits):
                 percent = limit.get("percent")
                 text = "?" if percent is None else str(round(percent))
                 reset = format_reset(limit.get("resets_at"))
                 title = f"{limit_label(limit)}: %{text}\n{T['resets']}: {reset}\n{updated}"
                 slot.paint(text, percent, title)
+
+    @staticmethod
+    def paint_compact(slot: Slot, limits: list[dict], updated: str) -> None:
+        known = [limit for limit in limits if limit.get("percent") is not None]
+        top = max(known, key=lambda limit: limit["percent"]) if known else None
+        percent = top["percent"] if top else None
+        text = "?" if percent is None else str(round(percent))
+        lines = []
+        for limit in limits:
+            value = limit.get("percent")
+            shown = "?" if value is None else str(round(value))
+            lines.append(f"{limit_label(limit)}: %{shown} ({format_reset(limit.get('resets_at'))})")
+        slot.paint(text, percent, "\n".join([*lines, updated]))
 
     def poll_once(self) -> float:
         self.last_request = time.monotonic()
